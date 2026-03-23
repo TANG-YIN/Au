@@ -48,6 +48,20 @@
             flex-wrap: wrap;
         }
 
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .control-label {
+            font-weight: 600;
+            color: #666;
+            font-size: 14px;
+        }
+
         .btn {
             padding: 10px 20px;
             border: none;
@@ -85,6 +99,9 @@
             width: 100%;
             height: 400px;
             margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
         }
 
         .chart-title {
@@ -134,13 +151,17 @@
             100% { transform: rotate(360deg); }
         }
 
-        .error-message {
-            background: #fee;
-            color: #c33;
-            padding: 15px;
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 15px;
             border-radius: 8px;
-            margin-bottom: 20px;
-            border-left: 4px solid #c33;
+            font-size: 12px;
+            z-index: 1000;
+            pointer-events: none;
+            white-space: nowrap;
+            display: none;
         }
 
         @media (max-width: 768px) {
@@ -173,7 +194,14 @@
         </div>
 
         <div id="content" style="display: none;">
-            <div id="errorMessage"></div>
+            <!-- 黄金价格类型切换 -->
+            <div class="controls">
+                <div class="control-group">
+                    <span class="control-label">黄金价格类型：</span>
+                    <button class="btn active" onclick="switchPriceType('international')">国际黄金 (USD/oz)</button>
+                    <button class="btn" onclick="switchPriceType('china')">中国现货黄金 (¥/克)</button>
+                </div>
+            </div>
 
             <!-- K线图 -->
             <div class="chart-wrapper">
@@ -184,8 +212,17 @@
                     <button class="btn" onclick="switchTimeframe('3d')">3天</button>
                     <button class="btn" onclick="switchTimeframe('7d')">7天</button>
                 </div>
+                <div class="chart-container" id="candleChartContainer">
+                    <canvas id="candleChart"></canvas>
+                    <div class="tooltip" id="tooltip"></div>
+                </div>
+            </div>
+
+            <!-- 价格线图 -->
+            <div class="chart-wrapper">
+                <div class="chart-title">时分线（价格趋势）</div>
                 <div class="chart-container">
-                    <canvas id="candlestickChart"></canvas>
+                    <canvas id="priceChart"></canvas>
                 </div>
             </div>
 
@@ -211,10 +248,12 @@
 
     <script>
         // 生成逼真的模拟数据
-        function generateMockData(timeframe) {
+        function generateMockData(timeframe, priceType) {
             const now = new Date();
             const data = [];
-            let basePrice = 2050 + Math.random() * 50;
+            
+            // 根据价格类型设置基础价格
+            let basePrice = priceType === 'international' ? (2050 + Math.random() * 50) : (430 + Math.random() * 20);
             
             const intervals = {
                 '6h': { points: 72, step: 5 * 60 * 1000 },
@@ -306,10 +345,12 @@
             return rsi;
         }
 
-        let candlestickChart = null;
+        let candleChart = null;
+        let priceChart = null;
         let indicatorChart = null;
         let currentData = [];
         let currentTimeframe = '1d';
+        let currentPriceType = 'international';
         let currentIndicators = {
             ma5: true,
             ma10: true,
@@ -317,16 +358,144 @@
             rsi: false
         };
 
-        // 创建K线图 - 使用组合图表方式
+        // 绘制蜡烛图 (Canvas绘制)
         function createCandlestickChart(data) {
-            const ctx = document.getElementById('candlestickChart');
-            if (!ctx) return;
+            const canvas = document.getElementById('candleChart');
+            const ctx = canvas.getContext('2d');
             
-            if (candlestickChart) {
-                candlestickChart.destroy();
+            // 设置canvas宽高
+            const container = document.getElementById('candleChartContainer');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+
+            // 清空canvas
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (data.length === 0) return;
+
+            // 计算价格范围
+            let minPrice = Math.min(...data.map(d => d.low));
+            let maxPrice = Math.max(...data.map(d => d.high));
+            const priceRange = maxPrice - minPrice;
+            minPrice -= priceRange * 0.1;
+            maxPrice += priceRange * 0.1;
+
+            // 绘图参数
+            const padding = 50;
+            const plotWidth = canvas.width - padding * 2;
+            const plotHeight = canvas.height - padding * 2;
+            const candleWidth = Math.max(2, plotWidth / data.length - 2);
+
+            // 绘制背景网格
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 5; i++) {
+                const y = padding + (plotHeight / 5) * i;
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(canvas.width - padding, y);
+                ctx.stroke();
             }
 
-            // 准备标签和数据
+            // 绘制蜡烛
+            data.forEach((candle, idx) => {
+                const x = padding + (plotWidth / data.length) * idx + (plotWidth / data.length - candleWidth) / 2;
+                
+                // 转换价格到Y坐标
+                const toY = (price) => canvas.height - padding - ((price - minPrice) / (maxPrice - minPrice)) * plotHeight;
+                
+                const y_open = toY(candle.open);
+                const y_close = toY(candle.close);
+                const y_high = toY(candle.high);
+                const y_low = toY(candle.low);
+                
+                const isUp = candle.close >= candle.open;
+                const color = isUp ? '#FF3B30' : '#4CAF50'; // 红涨绿跌
+
+                // 绘制高低线 (影线)
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x + candleWidth / 2, y_high);
+                ctx.lineTo(x + candleWidth / 2, y_low);
+                ctx.stroke();
+
+                // 绘制蜡烛 (实体)
+                const bodyTop = Math.min(y_open, y_close);
+                const bodyHeight = Math.abs(y_close - y_open);
+                ctx.fillStyle = color;
+                ctx.fillRect(x, bodyTop, candleWidth, Math.max(bodyHeight, 2));
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, bodyTop, candleWidth, Math.max(bodyHeight, 2));
+
+                // 保存蜡烛数据用于鼠标交互
+                candle.x = x;
+                candle.y_open = y_open;
+                candle.y_close = y_close;
+                candle.candleWidth = candleWidth;
+            });
+
+            // 绘制Y轴标签
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= 5; i++) {
+                const price = minPrice + (maxPrice - minPrice) * (i / 5);
+                const y = canvas.height - padding - (plotHeight / 5) * i;
+                ctx.fillText(price.toFixed(0), padding - 10, y + 4);
+            }
+
+            // 绘制X轴标签
+            ctx.textAlign = 'center';
+            for (let i = 0; i < data.length; i += Math.ceil(data.length / 10)) {
+                const x = padding + (plotWidth / data.length) * i + (plotWidth / data.length) / 2;
+                const date = data[i].date;
+                const timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+                ctx.fillText(timeStr, x, canvas.height - 10);
+            }
+
+            // 添加鼠标事件
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const tooltip = document.getElementById('tooltip');
+
+                for (let candle of data) {
+                    if (mouseX >= candle.x && mouseX <= candle.x + candle.candleWidth) {
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = mouseX + 'px';
+                        tooltip.style.top = '10px';
+                        tooltip.innerHTML = `
+                            开: $${candle.open.toFixed(2)}<br>
+                            高: $${candle.high.toFixed(2)}<br>
+                            低: $${candle.low.toFixed(2)}<br>
+                            收: $${candle.close.toFixed(2)}<br>
+                            时间: ${candle.date.toLocaleTimeString('zh-CN')}
+                        `;
+                        return;
+                    }
+                }
+                tooltip.style.display = 'none';
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                document.getElementById('tooltip').style.display = 'none';
+            });
+
+            updatePriceInfo(data[data.length - 1]);
+        }
+
+        // 创建价格线图
+        function createPriceChart(data) {
+            const ctx = document.getElementById('priceChart');
+            if (!ctx) return;
+            
+            if (priceChart) {
+                priceChart.destroy();
+            }
+
             const labels = data.map((d, i) => {
                 if (i % Math.ceil(data.length / 20) === 0) {
                     return d.date.toLocaleString('zh-CN', {
@@ -339,56 +508,23 @@
                 return '';
             });
 
-            // 分离上涨和下跌
-            const upData = [];
-            const downData = [];
-            
-            for (let i = 0; i < data.length; i++) {
-                const d = data[i];
-                const isUp = d.close >= d.open;
-                const o = d.open;
-                const c = d.close;
-                
-                // 上涨：使用收盘价，下跌：使用收盘价
-                if (isUp) {
-                    upData.push(c);
-                    downData.push(null);
-                } else {
-                    downData.push(c);
-                    upData.push(null);
-                }
-            }
+            const closePrices = data.map(d => d.close);
 
-            candlestickChart = new Chart(ctx, {
+            priceChart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [
                         {
-                            label: '上涨蜡烛',
-                            data: upData,
-                            borderColor: 'rgba(255, 59, 48, 1)',
-                            backgroundColor: 'rgba(255, 59, 48, 0.8)',
+                            label: '收盘价',
+                            data: closePrices,
+                            borderColor: 'rgba(102, 126, 234, 1)',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.3,
                             borderWidth: 2,
-                            pointRadius: 4,
-                            pointBackgroundColor: 'rgba(255, 59, 48, 1)',
-                            pointBorderColor: 'rgba(255, 59, 48, 1)',
-                            fill: false,
-                            tension: 0,
-                            showLine: false
-                        },
-                        {
-                            label: '下跌蜡烛',
-                            data: downData,
-                            borderColor: 'rgba(76, 175, 80, 1)',
-                            backgroundColor: 'rgba(76, 175, 80, 0.8)',
-                            borderWidth: 2,
-                            pointRadius: 4,
-                            pointBackgroundColor: 'rgba(76, 175, 80, 1)',
-                            pointBorderColor: 'rgba(76, 175, 80, 1)',
-                            fill: false,
-                            tension: 0,
-                            showLine: false
+                            pointRadius: 2,
+                            pointBackgroundColor: 'rgba(102, 126, 234, 1)'
                         }
                     ]
                 },
@@ -399,19 +535,6 @@
                         legend: {
                             display: true,
                             position: 'top'
-                        },
-                        tooltip: {
-                            enabled: true,
-                            mode: 'index',
-                            intersect: false,
-                            callbacks: {
-                                label: function(context) {
-                                    if (context.raw === null) return '';
-                                    const idx = context.dataIndex;
-                                    const d = data[idx];
-                                    return `开: $${d.open.toFixed(2)} 高: $${d.high.toFixed(2)} 低: $${d.low.toFixed(2)} 收: $${d.close.toFixed(2)}`;
-                                }
-                            }
                         }
                     },
                     scales: {
@@ -423,14 +546,12 @@
                         y: {
                             title: {
                                 display: true,
-                                text: '价格 (USD/oz)'
+                                text: currentPriceType === 'international' ? '价格 (USD/oz)' : '价格 (¥/克)'
                             }
                         }
                     }
                 }
             });
-
-            updatePriceInfo(data[data.length - 1]);
         }
 
         // 创建指标折线图
@@ -462,7 +583,6 @@
                 rsi: { border: 'rgba(236, 72, 153, 1)', bg: 'rgba(236, 72, 153, 0.1)' }
             };
 
-            // 确保至少有一个数据集（MA5）
             if (currentIndicators.ma5) {
                 const ma5 = calculateMA(data, 5);
                 datasets.push({
@@ -474,8 +594,7 @@
                     tension: 0.3,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: colors.ma5.border,
-                    pointBorderColor: colors.ma5.border
+                    pointBackgroundColor: colors.ma5.border
                 });
             }
 
@@ -490,8 +609,7 @@
                     tension: 0.3,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: colors.ma10.border,
-                    pointBorderColor: colors.ma10.border
+                    pointBackgroundColor: colors.ma10.border
                 });
             }
 
@@ -506,8 +624,7 @@
                     tension: 0.3,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: colors.ma20.border,
-                    pointBorderColor: colors.ma20.border
+                    pointBackgroundColor: colors.ma20.border
                 });
             }
 
@@ -523,7 +640,6 @@
                     borderWidth: 2,
                     pointRadius: 3,
                     pointBackgroundColor: colors.rsi.border,
-                    pointBorderColor: colors.rsi.border,
                     yAxisID: 'y1'
                 });
             }
@@ -545,19 +661,6 @@
                         legend: {
                             display: true,
                             position: 'top'
-                        },
-                        tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            callbacks: {
-                                label: function(context) {
-                                    if (context.raw === null) return '';
-                                    if (context.dataset.label.includes('RSI')) {
-                                        return `${context.dataset.label}: ${context.raw.toFixed(2)}`;
-                                    }
-                                    return `${context.dataset.label}: $${context.raw.toFixed(2)}`;
-                                }
-                            }
                         }
                     },
                     scales: {
@@ -569,7 +672,7 @@
                         y: {
                             title: {
                                 display: true,
-                                text: '价格 (USD/oz)'
+                                text: '价格'
                             },
                             beginAtZero: false
                         },
@@ -589,8 +692,28 @@
             });
         }
 
+        // 切换黄金价格类型
+        function switchPriceType(type) {
+            currentPriceType = type;
+            
+            // 更新按钮状态
+            document.querySelectorAll('.control-group .btn').forEach(btn => {
+                btn.classList.remove('active');
+                if ((type === 'international' && btn.textContent.includes('国际')) ||
+                    (type === 'china' && btn.textContent.includes('中国'))) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // 重新生成数据并更新图表
+            currentData = generateMockData(currentTimeframe, type);
+            createCandlestickChart(currentData);
+            createPriceChart(currentData);
+            createIndicatorChart(currentData);
+        }
+
         // 切换时间框架
-        async function switchTimeframe(timeframe) {
+        function switchTimeframe(timeframe) {
             currentTimeframe = timeframe;
             
             // 更新按钮状态
@@ -605,8 +728,9 @@
                 }
             });
 
-            currentData = generateMockData(timeframe);
+            currentData = generateMockData(timeframe, currentPriceType);
             createCandlestickChart(currentData);
+            createPriceChart(currentData);
             createIndicatorChart(currentData);
         }
 
@@ -635,8 +759,9 @@
             
             const changeClass = change >= 0 ? '↑' : '↓';
             const changeSign = change >= 0 ? '+' : '';
+            const priceUnit = currentPriceType === 'international' ? '¥/克' : 'USD/oz';
             
-            priceInfo.textContent = `当前价格: $${candle.close.toFixed(2)} | 涨跌: ${changeSign}${change.toFixed(2)} (${changeSign}${changePercent}%) ${changeClass} | 时间: ${timeStr}`;
+            priceInfo.textContent = `当前价格: ${changeSign}${candle.close.toFixed(2)} (${priceUnit}) | 涨跌: ${changeSign}${change.toFixed(2)} (${changeSign}${changePercent}%) ${changeClass} | 时间: ${timeStr}`;
         }
 
         // 初始化
@@ -646,14 +771,22 @@
                 document.getElementById('content').style.display = 'block';
                 
                 // 加载初始数据
-                currentData = generateMockData('1d');
+                currentData = generateMockData('1d', 'international');
                 
                 if (currentData && currentData.length > 0) {
                     createCandlestickChart(currentData);
+                    createPriceChart(currentData);
                     createIndicatorChart(currentData);
                 }
             }, 500);
         };
+
+        // 处理窗口改变大小
+        window.addEventListener('resize', () => {
+            if (currentData && currentData.length > 0) {
+                createCandlestickChart(currentData);
+            }
+        });
     </script>
 </body>
 </html>
