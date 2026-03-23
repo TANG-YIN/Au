@@ -76,7 +76,15 @@
             background: #f9f9f9;
             padding: 20px;
             border-radius: 10px;
-            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            margin-bottom: 20px;
         }
 
         .chart-title {
@@ -135,15 +143,6 @@
             border-left: 4px solid #c33;
         }
 
-        .info-message {
-            background: #efe;
-            color: #363;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border-left: 4px solid #363;
-        }
-
         @media (max-width: 768px) {
             .container {
                 padding: 15px;
@@ -158,8 +157,8 @@
                 font-size: 12px;
             }
 
-            .chart-wrapper {
-                min-height: 300px;
+            .chart-container {
+                height: 300px;
             }
         }
     </style>
@@ -176,6 +175,7 @@
         <div id="content" style="display: none;">
             <div id="errorMessage"></div>
 
+            <!-- K线图 -->
             <div class="chart-wrapper">
                 <div class="chart-title">K线图（蜡烛图）</div>
                 <div class="controls">
@@ -184,9 +184,12 @@
                     <button class="btn" onclick="switchTimeframe('3d')">3天</button>
                     <button class="btn" onclick="switchTimeframe('7d')">7天</button>
                 </div>
-                <canvas id="candlestickChart" style="max-height: 400px;"></canvas>
+                <div class="chart-container">
+                    <canvas id="candlestickChart"></canvas>
+                </div>
             </div>
 
+            <!-- 分析指标折线图 -->
             <div class="chart-wrapper">
                 <div class="chart-title">分析指标折线图</div>
                 <div class="indicators">
@@ -195,7 +198,9 @@
                     <button class="btn active" onclick="toggleIndicator('ma20')">MA20</button>
                     <button class="btn" onclick="toggleIndicator('rsi')">RSI</button>
                 </div>
-                <canvas id="indicatorChart" style="max-height: 400px;"></canvas>
+                <div class="chart-container">
+                    <canvas id="indicatorChart"></canvas>
+                </div>
             </div>
 
             <div class="price-info" id="priceInfo">
@@ -205,33 +210,17 @@
     </div>
 
     <script>
-        // 获取真实黄金价格数据（使用公共API）
-        async function fetchGoldPriceData(timeframe) {
-            try {
-                // 使用Alpha Vantage API 获取黄金价格 (XAUUSD)
-                // 也可以使用其他金融数据API
-                const now = new Date();
-                const data = [];
-                
-                // 如果API不可用，生成模拟数据
-                return generateMockData(timeframe);
-            } catch (error) {
-                console.error('获取数据错误:', error);
-                return generateMockData(timeframe);
-            }
-        }
-
         // 生成逼真的模拟数据
         function generateMockData(timeframe) {
             const now = new Date();
             const data = [];
-            let basePrice = 2050 + Math.random() * 50; // 真实黄金价格范围
+            let basePrice = 2050 + Math.random() * 50;
             
             const intervals = {
-                '6h': { points: 72, step: 5 * 60 * 1000 },      // 5分钟
-                '1d': { points: 288, step: 5 * 60 * 1000 },     // 5分钟
-                '3d': { points: 432, step: 10 * 60 * 1000 },    // 10分钟
-                '7d': { points: 672, step: 15 * 60 * 1000 }     // 15分钟
+                '6h': { points: 72, step: 5 * 60 * 1000 },
+                '1d': { points: 288, step: 5 * 60 * 1000 },
+                '3d': { points: 432, step: 10 * 60 * 1000 },
+                '7d': { points: 672, step: 15 * 60 * 1000 }
             };
             
             const config = intervals[timeframe] || intervals['1d'];
@@ -240,7 +229,6 @@
                 const timestamp = now.getTime() - i * config.step;
                 const date = new Date(timestamp);
                 
-                // 生成布朗运动随机游走（更逼真的价格走势）
                 const randomWalk = (Math.random() - 0.5) * 2;
                 const trend = (Math.random() - 0.5) * 0.3;
                 const volatility = (Math.random() - 0.5) * 1.5;
@@ -255,10 +243,10 @@
                 data.push({
                     date: date,
                     timestamp: timestamp,
-                    open: open,
-                    high: high,
-                    low: low,
-                    close: close,
+                    open: parseFloat(open.toFixed(2)),
+                    high: parseFloat(high.toFixed(2)),
+                    low: parseFloat(low.toFixed(2)),
+                    close: parseFloat(close.toFixed(2)),
                     volume: Math.random() * 1000000
                 });
             }
@@ -277,7 +265,7 @@
                     for (let j = 0; j < period; j++) {
                         sum += data[i - j].close;
                     }
-                    ma.push(sum / period);
+                    ma.push(parseFloat((sum / period).toFixed(2)));
                 }
             }
             return ma;
@@ -310,7 +298,7 @@
                         rsi.push(avgGain === 0 ? 50 : 100);
                     } else {
                         const rs = avgGain / avgLoss;
-                        rsi.push(100 - (100 / (1 + rs)));
+                        rsi.push(parseFloat((100 - (100 / (1 + rs))).toFixed(2)));
                     }
                 }
             }
@@ -318,8 +306,8 @@
             return rsi;
         }
 
-        let candlestickChart;
-        let indicatorChart;
+        let candlestickChart = null;
+        let indicatorChart = null;
         let currentData = [];
         let currentTimeframe = '1d';
         let currentIndicators = {
@@ -329,7 +317,7 @@
             rsi: false
         };
 
-        // 创建K线图
+        // 创建K线图 - 使用组合图表方式
         function createCandlestickChart(data) {
             const ctx = document.getElementById('candlestickChart');
             if (!ctx) return;
@@ -338,6 +326,7 @@
                 candlestickChart.destroy();
             }
 
+            // 准备标签和数据
             const labels = data.map((d, i) => {
                 if (i % Math.ceil(data.length / 20) === 0) {
                     return d.date.toLocaleString('zh-CN', {
@@ -350,55 +339,77 @@
                 return '';
             });
 
-            // 分离上涨和下跌数据
-            const candleData = data.map(d => ({
-                o: d.open,
-                h: d.high,
-                l: d.low,
-                c: d.close,
-                x: d.date.getTime(),
-                up: d.close >= d.open
-            }));
+            // 分离上涨和下跌
+            const upData = [];
+            const downData = [];
+            
+            for (let i = 0; i < data.length; i++) {
+                const d = data[i];
+                const isUp = d.close >= d.open;
+                const o = d.open;
+                const c = d.close;
+                
+                // 上涨：使用收盘价，下跌：使用收盘价
+                if (isUp) {
+                    upData.push(c);
+                    downData.push(null);
+                } else {
+                    downData.push(c);
+                    upData.push(null);
+                }
+            }
 
             candlestickChart = new Chart(ctx, {
-                type: 'bar',
+                type: 'line',
                 data: {
                     labels: labels,
                     datasets: [
                         {
-                            label: '上涨',
-                            data: candleData.map((d, i) => d.up ? d : null),
-                            backgroundColor: 'rgba(255, 59, 48, 0.7)',
+                            label: '上涨蜡烛',
+                            data: upData,
                             borderColor: 'rgba(255, 59, 48, 1)',
-                            borderWidth: 1,
-                            barPercentage: 0.7,
-                            categoryPercentage: 0.8
+                            backgroundColor: 'rgba(255, 59, 48, 0.8)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            pointBackgroundColor: 'rgba(255, 59, 48, 1)',
+                            pointBorderColor: 'rgba(255, 59, 48, 1)',
+                            fill: false,
+                            tension: 0,
+                            showLine: false
                         },
                         {
-                            label: '下跌',
-                            data: candleData.map((d, i) => !d.up ? d : null),
-                            backgroundColor: 'rgba(76, 175, 80, 0.7)',
+                            label: '下跌蜡烛',
+                            data: downData,
                             borderColor: 'rgba(76, 175, 80, 1)',
-                            borderWidth: 1,
-                            barPercentage: 0.7,
-                            categoryPercentage: 0.8
+                            backgroundColor: 'rgba(76, 175, 80, 0.8)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            pointBackgroundColor: 'rgba(76, 175, 80, 1)',
+                            pointBorderColor: 'rgba(76, 175, 80, 1)',
+                            fill: false,
+                            tension: 0,
+                            showLine: false
                         }
                     ]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: true,
                             position: 'top'
                         },
                         tooltip: {
+                            enabled: true,
+                            mode: 'index',
+                            intersect: false,
                             callbacks: {
                                 label: function(context) {
-                                    const d = context.raw;
-                                    if (!d) return '';
-                                    return `开: $${d.o.toFixed(2)} 高: $${d.h.toFixed(2)} 低: $${d.l.toFixed(2)} 收: $${d.c.toFixed(2)}`;
+                                    if (context.raw === null) return '';
+                                    const idx = context.dataIndex;
+                                    const d = data[idx];
+                                    return `开: $${d.open.toFixed(2)} 高: $${d.high.toFixed(2)} 低: $${d.low.toFixed(2)} 收: $${d.close.toFixed(2)}`;
                                 }
                             }
                         }
@@ -451,6 +462,7 @@
                 rsi: { border: 'rgba(236, 72, 153, 1)', bg: 'rgba(236, 72, 153, 0.1)' }
             };
 
+            // 确保至少有一个数据集（MA5）
             if (currentIndicators.ma5) {
                 const ma5 = calculateMA(data, 5);
                 datasets.push({
@@ -461,8 +473,9 @@
                     fill: false,
                     tension: 0.3,
                     borderWidth: 2,
-                    pointRadius: 0,
-                    pointBackgroundColor: colors.ma5.border
+                    pointRadius: 3,
+                    pointBackgroundColor: colors.ma5.border,
+                    pointBorderColor: colors.ma5.border
                 });
             }
 
@@ -476,8 +489,9 @@
                     fill: false,
                     tension: 0.3,
                     borderWidth: 2,
-                    pointRadius: 0,
-                    pointBackgroundColor: colors.ma10.border
+                    pointRadius: 3,
+                    pointBackgroundColor: colors.ma10.border,
+                    pointBorderColor: colors.ma10.border
                 });
             }
 
@@ -491,8 +505,9 @@
                     fill: false,
                     tension: 0.3,
                     borderWidth: 2,
-                    pointRadius: 0,
-                    pointBackgroundColor: colors.ma20.border
+                    pointRadius: 3,
+                    pointBackgroundColor: colors.ma20.border,
+                    pointBorderColor: colors.ma20.border
                 });
             }
 
@@ -506,8 +521,9 @@
                     fill: false,
                     tension: 0.3,
                     borderWidth: 2,
-                    pointRadius: 0,
+                    pointRadius: 3,
                     pointBackgroundColor: colors.rsi.border,
+                    pointBorderColor: colors.rsi.border,
                     yAxisID: 'y1'
                 });
             }
@@ -520,7 +536,7 @@
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
                     interaction: {
                         mode: 'index',
                         intersect: false
@@ -531,8 +547,11 @@
                             position: 'top'
                         },
                         tooltip: {
+                            mode: 'index',
+                            intersect: false,
                             callbacks: {
                                 label: function(context) {
+                                    if (context.raw === null) return '';
                                     if (context.dataset.label.includes('RSI')) {
                                         return `${context.dataset.label}: ${context.raw.toFixed(2)}`;
                                     }
@@ -559,14 +578,11 @@
                             display: currentIndicators.rsi,
                             position: 'right',
                             title: {
-                                display: true,
+                                display: currentIndicators.rsi,
                                 text: 'RSI'
                             },
                             min: 0,
-                            max: 100,
-                            ticks: {
-                                beginAtZero: true
-                            }
+                            max: 100
                         }
                     }
                 }
@@ -589,8 +605,7 @@
                 }
             });
 
-            // 获取数据并更新图表
-            currentData = await fetchGoldPriceData(timeframe);
+            currentData = generateMockData(timeframe);
             createCandlestickChart(currentData);
             createIndicatorChart(currentData);
         }
@@ -624,37 +639,20 @@
             priceInfo.textContent = `当前价格: $${candle.close.toFixed(2)} | 涨跌: ${changeSign}${change.toFixed(2)} (${changeSign}${changePercent}%) ${changeClass} | 时间: ${timeStr}`;
         }
 
-        // 显示错误信息
-        function showError(message) {
-            const errorDiv = document.getElementById('errorMessage');
-            if (errorDiv) {
-                errorDiv.innerHTML = `<div class="error-message">${message}</div>`;
-            }
-        }
-
         // 初始化
-        window.onload = async function() {
-            try {
-                setTimeout(async () => {
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('content').style.display = 'block';
-                    
-                    // 加载初始数据
-                    currentData = await fetchGoldPriceData('1d');
-                    
-                    if (currentData && currentData.length > 0) {
-                        createCandlestickChart(currentData);
-                        createIndicatorChart(currentData);
-                    } else {
-                        showError('无法加载数据，请检查网络连接');
-                    }
-                }, 800);
-            } catch (error) {
-                console.error('初始化错误:', error);
+        window.onload = function() {
+            setTimeout(() => {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('content').style.display = 'block';
-                showError(`加载失败: ${error.message}`);
-            }
+                
+                // 加载初始数据
+                currentData = generateMockData('1d');
+                
+                if (currentData && currentData.length > 0) {
+                    createCandlestickChart(currentData);
+                    createIndicatorChart(currentData);
+                }
+            }, 500);
         };
     </script>
 </body>
