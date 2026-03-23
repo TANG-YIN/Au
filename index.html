@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>黄金价格走势图 - 黄金一周内走势</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn:hover {
+            background: #e0e0e0;
+            transform: translateY(-2px);
+        }
+
+        .btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .chart-container {
+            margin-bottom: 30px;
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .indicators {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
+
+        .price-info {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            h1 {
+                font-size: 1.5em;
+            }
+
+            .btn {
+                padding: 8px 16px;
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📈 黄金价格走势图</h1>
+
+        <div class="chart-container">
+            <div class="chart-title">K线图（蜡烛图）</div>
+            <div class="controls">
+                <button class="btn" onclick="switchTimeframe('6h')">6小时</button>
+                <button class="btn active" onclick="switchTimeframe('1d')">1天</button>
+                <button class="btn" onclick="switchTimeframe('3d')">3天</button>
+                <button class="btn" onclick="switchTimeframe('7d')">7天</button>
+            </div>
+            <canvas id="candlestickChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">分析指标折线图</div>
+            <div class="indicators">
+                <button class="btn active" onclick="toggleIndicator('ma5')">MA5</button>
+                <button class="btn active" onclick="toggleIndicator('ma10')">MA10</button>
+                <button class="btn active" onclick="toggleIndicator('ma20')">MA20</button>
+                <button class="btn" onclick="toggleIndicator('rsi')">RSI</button>
+            </div>
+            <canvas id="indicatorChart"></canvas>
+        </div>
+
+        <div class="price-info" id="priceInfo">
+            当前价格: $0.00
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // 模拟黄金价格数据生成
+        function generateGoldData(timeframe) {
+            const now = new Date();
+            const data = [];
+            let basePrice = 2300 + Math.random() * 100;
+            
+            const intervals = {
+                '6h': 60,      // 6小时，每6分钟一个数据点
+                '1d': 240,     // 1天，每4小时一个数据点
+                '3d': 720,     // 3天，每12小时一个数据点
+                '7d': 1680     // 7天，每24小时一个数据点
+            };
+            
+            const points = intervals[timeframe] || 240;
+            const timeInterval = timeframe === '6h' ? 6 * 60 * 1000 :
+                                 timeframe === '1d' ? 4 * 60 * 60 * 1000 :
+                                 timeframe === '3d' ? 12 * 60 * 60 * 1000 :
+                                 24 * 60 * 60 * 1000;
+
+            for (let i = points; i >= 0; i--) {
+                const date = new Date(now.getTime() - i * timeInterval);
+                const volatility = (Math.random() - 0.5) * 20;
+                const open = basePrice;
+                const close = basePrice + volatility;
+                const high = Math.max(open, close) + Math.random() * 10;
+                const low = Math.min(open, close) - Math.random() * 10;
+                
+                data.push({
+                    date: date,
+                    open: open,
+                    high: high,
+                    low: low,
+                    close: close
+                });
+                
+                basePrice = close + (Math.random() - 0.5) * 15;
+            }
+            
+            return data;
+        }
+
+        // 计算移动平均线
+        function calculateMA(data, period) {
+            const ma = [];
+            for (let i = 0; i < data.length; i++) {
+                if (i < period - 1) {
+                    ma.push(null);
+                } else {
+                    let sum = 0;
+                    for (let j = 0; j < period; j++) {
+                        sum += data[i - j].close;
+                    }
+                    ma.push(sum / period);
+                }
+            }
+            return ma;
+        }
+
+        // 计算RSI
+        function calculateRSI(data, period = 14) {
+            const rsi = [];
+            const gains = [];
+            const losses = [];
+            
+            for (let i = 1; i < data.length; i++) {
+                const change = data[i].close - data[i - 1].close;
+                gains.push(change > 0 ? change : 0);
+                losses.push(change < 0 ? Math.abs(change) : 0);
+            }
+            
+            for (let i = 0; i < data.length; i++) {
+                if (i < period) {
+                    rsi.push(null);
+                } else {
+                    let avgGain = gains.slice(i - period, i).reduce((a, b) => a + b, 0) / period;
+                    let avgLoss = losses.slice(i - period, i).reduce((a, b) => a + b, 0) / period;
+                    
+                    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+                    rsi.push(100 - (100 / (1 + rs)));
+                }
+            }
+            
+            return rsi;
+        }
+
+        let candlestickChart;
+        let indicatorChart;
+        let currentData = [];
+        let currentIndicators = {
+            ma5: true,
+            ma10: true,
+            ma20: true,
+            rsi: false
+        };
+
+        // 创建K线图
+        function createCandlestickChart(data) {
+            const ctx = document.getElementById('candlestickChart').getContext('2d');
+            
+            if (candlestickChart) {
+                candlestickChart.destroy();
+            }
+
+            const labels = data.map(d => d.date.toLocaleString('zh-CN', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            }));
+
+            // 创建K线数据集
+            const upData = [];
+            const downData = [];
+            const labelsFiltered = [];
+            
+            data.forEach((d, i) => {
+                if (d.close >= d.open) {
+                    upData.push(d);
+                    downData.push(null);
+                } else {
+                    upData.push(null);
+                    downData.push(d);
+                }
+                labelsFiltered.push(labels[i]);
+            });
+
+            candlestickChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labelsFiltered,
+                    datasets: [
+                        {
+                            label: '上涨',
+                            data: upData.map(d => ({
+                                x: d.date,
+                                y: [d.low, d.open, d.close, d.high]
+                            })),
+                            backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                            borderColor: 'rgba(239, 68, 68, 1)',
+                            borderWidth: 2,
+                            order: 1
+                        },
+                        {
+                            label: '下跌',
+                            data: downData.map(d => ({
+                                x: d.date,
+                                y: [d.low, d.close, d.open, d.high]
+                            })),
+                            backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                            borderColor: 'rgba(34, 197, 94, 1)',
+                            borderWidth: 2,
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const data = context.raw;
+                                    if (!data) return '';
+                                    return `开: $${data.y[1].toFixed(2)} 高: $${data.y[3].toFixed(2)} 低: $${data.y[0].toFixed(2)} 收: $${data.y[2].toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxTicksLimit: 10,
+                                callback: function(value, index, values) {
+                                    const label = this.getLabelForValue(value);
+                                    return label.split(' ');
+                                }
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '价格 (USD)'
+                            }
+                        }
+                    },
+                    onHover: function(event, elements) {
+                        if (elements.length > 0) {
+                            const index = elements[0].index;
+                            const data = currentData[index];
+                            updatePriceInfo(data.close);
+                        }
+                    }
+                }
+            });
+
+            updatePriceInfo(data[data.length - 1].close);
+        }
+
+        // 创建指标折线图
+        function createIndicatorChart(data) {
+            const ctx = document.getElementById('indicatorChart').getContext('2d');
+            
+            if (indicatorChart) {
+                indicatorChart.destroy();
+            }
+
+            const labels = data.map(d => d.date.toLocaleString('zh-CN', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            }));
+
+            const datasets = [];
+            const colors = {
+                ma5: { bg: 'rgba(59, 130, 246, 0.1)', border: 'rgba(59, 130, 246, 1)' },
+                ma10: { bg: 'rgba(249, 115, 22, 0.1)', border: 'rgba(249, 115, 22, 1)' },
+                ma20: { bg: 'rgba(168, 85, 247, 0.1)', border: 'rgba(168, 85, 247, 1)' },
+                rsi: { bg: 'rgba(236, 72, 153, 0.1)', border: 'rgba(236, 72, 153, 1)' }
+            };
+
+            if (currentIndicators.ma5) {
+                const ma5 = calculateMA(data, 5);
+                datasets.push({
+                    label: 'MA5',
+                    data: ma5,
+                    borderColor: colors.ma5.border,
+                    backgroundColor: colors.ma5.bg,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0
+                });
+            }
+
+            if (currentIndicators.ma10) {
+                const ma10 = calculateMA(data, 10);
+                datasets.push({
+                    label: 'MA10',
+                    data: ma10,
+                    borderColor: colors.ma10.border,
+                    backgroundColor: colors.ma10.bg,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0
+                });
+            }
+
+            if (currentIndicators.ma20) {
+                const ma20 = calculateMA(data, 20);
+                datasets.push({
+                    label: 'MA20',
+                    data: ma20,
+                    borderColor: colors.ma20.border,
+                    backgroundColor: colors.ma20.bg,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0
+                });
+            }
+
+            if (currentIndicators.rsi) {
+                const rsi = calculateRSI(data, 14);
+                // 将RSI值映射到价格区间以便在同一图表中显示
+                const rsiScaled = rsi.map(v => v ? (v / 100) * (Math.max(...data.map(d => d.high)) - Math.min(...data.map(d => d.low))) + Math.min(...data.map(d => d.low)) : null);
+                datasets.push({
+                    label: 'RSI',
+                    data: rsiScaled,
+                    borderColor: colors.rsi.border,
+                    backgroundColor: colors.rsi.bg,
+                    fill: false,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    yAxisID: 'y1'
+                });
+            }
+
+            indicatorChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.dataset.label === 'RSI') {
+                                        const index = context.dataIndex;
+                                        const rsiValue = calculateRSI(data, 14)[index];
+                                        return `${context.dataset.label}: ${rsiValue.toFixed(2)}`;
+                                    }
+                                    return `${context.dataset.label}: $${context.raw.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxTicksLimit: 10
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '价格 (USD)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: currentIndicators.rsi,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'RSI'
+                            },
+                            min: 0,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        // 切换时间框架
+        function switchTimeframe(timeframe) {
+            // 更新按钮状态
+            document.querySelectorAll('.controls .btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.textContent === (timeframe === '6h' ? '6小时' : 
+                                         timeframe === '1d' ? '1天' : 
+                                         timeframe === '3d' ? '3天' : '7天')) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // 重新生成数据并更新图表
+            currentData = generateGoldData(timeframe);
+            createCandlestickChart(currentData);
+            createIndicatorChart(currentData);
+        }
+
+        // 切换指标显示
+        function toggleIndicator(indicator) {
+            currentIndicators[indicator] = !currentIndicators[indicator];
+            
+            // 更新按钮状态
+            const btn = event.target;
+            btn.classList.toggle('active');
+            
+            // 更新指标图
+            createIndicatorChart(currentData);
+        }
+
+        // 更新价格信息
+        function updatePriceInfo(price) {
+            const priceInfo = document.getElementById('priceInfo');
+            priceInfo.textContent = `当前价格: $${price.toFixed(2)}`;
+        }
+
+        // 初始化
+        window.onload = function() {
+            currentData = generateGoldData('1d');
+            createCandlestickChart(currentData);
+            createIndicatorChart(currentData);
+        };
+    </script>
+</body>
+</html>
