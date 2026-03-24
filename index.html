@@ -383,27 +383,45 @@
             const config = TIMEFRAME_CONFIG[timeframe] || TIMEFRAME_CONFIG['7d'];
             let price = basePrice;
 
+            // 固定种子随机数：同一 basePrice + timeframe 结果一致，避免切换时K线跳动
+            const seed = Math.floor(basePrice) * 1000 + config.points;
+            function seededRand(s) {
+                const x = Math.sin(s) * 10000;
+                return x - Math.floor(x);
+            }
+
             if (config.kType === 'hourly') {
-                // ── 时K：每小时一根蜡烛，交易时段09:00-21:00有波动 ──
-                for (let i = config.points; i >= 0; i--) {
-                    const timestamp = now.getTime() - i * config.step;
+                // ── 时K：每小时一根蜡烛，时间整点对齐 ──
+                // 将"现在"对齐到当前小时的整点（去掉分秒）
+                const nowHour = new Date(
+                    now.getFullYear(), now.getMonth(), now.getDate(),
+                    now.getHours(), 0, 0, 0
+                );
+
+                // 生成历史整点K线（不含当前未完成小时）
+                for (let i = config.points - 1; i >= 1; i--) {
+                    const timestamp = nowHour.getTime() - i * config.step;
                     const date = new Date(timestamp);
                     const hour = date.getHours();
                     const isMarketOpen = hour >= 9 && hour < 21;
 
+                    const r1 = seededRand(seed + i * 7);
+                    const r2 = seededRand(seed + i * 13);
+                    const r3 = seededRand(seed + i * 17);
+                    const r4 = seededRand(seed + i * 23);
+
                     if (isMarketOpen) {
-                        const randomWalk = (Math.random() - 0.5) * config.volatilityBase;
-                        const trend = (Math.random() - 0.5) * 0.3;
+                        const randomWalk = (r1 - 0.5) * config.volatilityBase;
+                        const trend = (r2 - 0.5) * 0.3;
                         price = Math.max(basePrice * 0.93, price + randomWalk + trend);
                     }
-                    // 非交易时段 price 不变
 
                     const bodyRange = config.volatilityBase * 0.3;
                     const wickRange = config.volatilityBase * 0.15;
                     const open  = price;
-                    const close = price + (isMarketOpen ? (Math.random() - 0.5) * bodyRange : 0);
-                    const high  = Math.max(open, close) + (isMarketOpen ? Math.random() * wickRange : 0);
-                    const low   = Math.min(open, close) - (isMarketOpen ? Math.random() * wickRange : 0);
+                    const close = price + (isMarketOpen ? (r3 - 0.5) * bodyRange : 0);
+                    const high  = Math.max(open, close) + (isMarketOpen ? r4 * wickRange : 0);
+                    const low   = Math.min(open, close) - (isMarketOpen ? seededRand(seed + i * 31) * wickRange : 0);
 
                     data.push({
                         date, timestamp,
@@ -413,6 +431,46 @@
                         close: parseFloat(close.toFixed(2)),
                         isMarketOpen,
                         kType: 'hourly'
+                    });
+                }
+
+                // 最后追加"当前未完成小时"的K线
+                // 例如现在15:40，则这根K线代表 15:00~15:40
+                {
+                    const timestamp = nowHour.getTime(); // 本小时整点
+                    const date = new Date(timestamp);
+                    const hour = date.getHours();
+                    const isMarketOpen = hour >= 9 && hour < 21;
+                    const minuteLabel = now.getMinutes(); // 实际到了几分钟
+
+                    const r1 = seededRand(seed + 999991);
+                    const r2 = seededRand(seed + 999993);
+                    const r3 = seededRand(seed + 999997);
+
+                    if (isMarketOpen) {
+                        const randomWalk = (r1 - 0.5) * config.volatilityBase;
+                        price = Math.max(basePrice * 0.93, price + randomWalk);
+                    }
+
+                    const bodyRange = config.volatilityBase * 0.3;
+                    const wickRange = config.volatilityBase * 0.15;
+                    const open  = price;
+                    const close = price + (isMarketOpen ? (r2 - 0.5) * bodyRange : 0);
+                    const high  = Math.max(open, close) + (isMarketOpen ? r3 * wickRange : 0);
+                    const low   = Math.min(open, close) - (isMarketOpen ? seededRand(seed + 999999) * wickRange : 0);
+
+                    // 当前未完成K线：date 存整点，但 tooltip 展示到分钟
+                    data.push({
+                        date,
+                        timestamp,
+                        open:  parseFloat(open.toFixed(2)),
+                        high:  parseFloat(high.toFixed(2)),
+                        low:   parseFloat(low.toFixed(2)),
+                        close: parseFloat(close.toFixed(2)),
+                        isMarketOpen,
+                        kType: 'hourly',
+                        isCurrentBar: true,   // 标记为当前未完成K线
+                        currentMinute: minuteLabel
                     });
                 }
             } else {
@@ -438,18 +496,26 @@
                 // Step2：tradingDays 现在是 [今天, 昨天, ...最远]，反转为升序
                 tradingDays.reverse();
 
-                // Step3：按升序依次生成蜡烛数据
-                for (const { timestamp, date } of tradingDays) {
-                    const dailyMove = (Math.random() - 0.5) * config.volatilityBase * 2;
-                    const trend = (Math.random() - 0.48) * config.volatilityBase * 0.5;
+                // Step3：按升序依次生成蜡烛数据（固定种子，避免切换跳动）
+                for (let idx = 0; idx < tradingDays.length; idx++) {
+                    const { timestamp, date } = tradingDays[idx];
+                    const s = seed + idx * 100;
+                    const r1 = seededRand(s + 1);
+                    const r2 = seededRand(s + 3);
+                    const r3 = seededRand(s + 7);
+                    const r4 = seededRand(s + 11);
+                    const r5 = seededRand(s + 13);
+
+                    const dailyMove = (r1 - 0.5) * config.volatilityBase * 2;
+                    const trend = (r2 - 0.48) * config.volatilityBase * 0.5;
                     price = Math.max(basePrice * 0.90, price + dailyMove + trend);
 
                     const bodyRange = config.volatilityBase * 0.8;
                     const wickRange = config.volatilityBase * 0.5;
-                    const open  = price + (Math.random() - 0.5) * bodyRange * 0.5;
-                    const close = price + (Math.random() - 0.5) * bodyRange;
-                    const high  = Math.max(open, close) + Math.random() * wickRange;
-                    const low   = Math.min(open, close) - Math.random() * wickRange;
+                    const open  = price + (r3 - 0.5) * bodyRange * 0.5;
+                    const close = price + (r4 - 0.5) * bodyRange;
+                    const high  = Math.max(open, close) + r5 * wickRange;
+                    const low   = Math.min(open, close) - seededRand(s + 17) * wickRange;
 
                     data.push({
                         date, timestamp,
@@ -620,9 +686,16 @@
             for (let i = 0; i < data.length; i += Math.ceil(data.length / 10)) {
                 const x = padding + (plotWidth / data.length) * i + (plotWidth / data.length) / 2;
                 const d = data[i].date;
-                const timeStr = isDaily
-                    ? d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-                    : d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                let timeStr;
+                if (isDaily) {
+                    timeStr = d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+                } else {
+                    // 时K：只显示月/日 小时:00，整点格式
+                    const mo = String(d.getMonth() + 1).padStart(2, '0');
+                    const dy = String(d.getDate()).padStart(2, '0');
+                    const hr = String(d.getHours()).padStart(2, '0');
+                    timeStr = `${mo}/${dy} ${hr}:00`;
+                }
                 ctx.fillText(timeStr, x, canvas.height - 10);
             }
 
@@ -637,10 +710,29 @@
                         tooltip.style.display = 'block';
                         tooltip.style.left = mouseX + 'px';
                         tooltip.style.top = '10px';
-                        const marketStatus = candle.kType === 'daily' ? '(日K)' : (candle.isMarketOpen ? '(交易时段)' : '(非交易时段)');
-                        const timeDisplay = candle.kType === 'daily'
-                            ? candle.date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                            : candle.date.toLocaleString('zh-CN');
+
+                        let marketStatus, timeDisplay;
+                        if (candle.kType === 'daily') {
+                            marketStatus = '(日K)';
+                            timeDisplay = candle.date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+                        } else if (candle.isCurrentBar) {
+                            // 当前未完成小时K线
+                            const hr = String(candle.date.getHours()).padStart(2, '0');
+                            const endMin = String(candle.currentMinute).padStart(2, '0');
+                            const mo = String(candle.date.getMonth() + 1).padStart(2, '0');
+                            const dy = String(candle.date.getDate()).padStart(2, '0');
+                            marketStatus = candle.isMarketOpen ? '(进行中)' : '(非交易时段)';
+                            timeDisplay = `${mo}/${dy} ${hr}:00 ~ ${hr}:${endMin}`;
+                        } else {
+                            // 已完成小时K线
+                            const hr = String(candle.date.getHours()).padStart(2, '0');
+                            const nextHr = String(candle.date.getHours() + 1).padStart(2, '0');
+                            const mo = String(candle.date.getMonth() + 1).padStart(2, '0');
+                            const dy = String(candle.date.getDate()).padStart(2, '0');
+                            marketStatus = candle.isMarketOpen ? '(交易时段)' : '(非交易时段)';
+                            timeDisplay = `${mo}/${dy} ${hr}:00 ~ ${nextHr}:00`;
+                        }
+
                         tooltip.innerHTML = `
                             ${marketStatus}<br>
                             开: ${candle.open.toFixed(2)}<br>
