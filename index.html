@@ -398,30 +398,39 @@
                     now.getHours(), 0, 0, 0
                 );
 
-                // 生成历史整点K线（不含当前未完成小时）
-                for (let i = config.points - 1; i >= 1; i--) {
+                // ── 倒推策略：先从 basePrice 出发，向过去方向生成价格序列，再正序填蜡烛 ──
+                // 这样不论 points=24 还是 72，最新一根都锚定在 basePrice 附近，实现末尾对齐
+                const hourPrices = [basePrice]; // index 0 = 当前小时，index 1 = 上一小时 ...
+                for (let i = 1; i < config.points; i++) {
                     const timestamp = nowHour.getTime() - i * config.step;
+                    const hour = new Date(timestamp).getHours();
+                    const isMarketOpen = hour >= 9 && hour < 21;
+                    const r1 = seededRand(seed + i * 7);
+                    const r2 = seededRand(seed + i * 13);
+                    const walk = isMarketOpen ? (r1 - 0.5) * config.volatilityBase + (r2 - 0.5) * 0.3 : 0;
+                    const prev = hourPrices[i - 1];
+                    hourPrices.push(Math.max(basePrice * 0.93, prev - walk)); // 往过去"反向"走
+                }
+                hourPrices.reverse(); // 现在 index 0 = 最远, index[last-1] = 上一小时, index[last] 留给当前K
+
+                // 生成历史整点K线（不含当前未完成小时）
+                for (let i = 0; i < config.points - 1; i++) {
+                    const timestamp = nowHour.getTime() - (config.points - 1 - i) * config.step;
                     const date = new Date(timestamp);
                     const hour = date.getHours();
                     const isMarketOpen = hour >= 9 && hour < 21;
 
-                    const r1 = seededRand(seed + i * 7);
-                    const r2 = seededRand(seed + i * 13);
-                    const r3 = seededRand(seed + i * 17);
-                    const r4 = seededRand(seed + i * 23);
-
-                    if (isMarketOpen) {
-                        const randomWalk = (r1 - 0.5) * config.volatilityBase;
-                        const trend = (r2 - 0.5) * 0.3;
-                        price = Math.max(basePrice * 0.93, price + randomWalk + trend);
-                    }
+                    price = hourPrices[i];
+                    const r3 = seededRand(seed + (config.points - 1 - i) * 17);
+                    const r4 = seededRand(seed + (config.points - 1 - i) * 23);
+                    const r5 = seededRand(seed + (config.points - 1 - i) * 31);
 
                     const bodyRange = config.volatilityBase * 0.3;
                     const wickRange = config.volatilityBase * 0.15;
                     const open  = price;
                     const close = price + (isMarketOpen ? (r3 - 0.5) * bodyRange : 0);
                     const high  = Math.max(open, close) + (isMarketOpen ? r4 * wickRange : 0);
-                    const low   = Math.min(open, close) - (isMarketOpen ? seededRand(seed + i * 31) * wickRange : 0);
+                    const low   = Math.min(open, close) - (isMarketOpen ? r5 * wickRange : 0);
 
                     data.push({
                         date, timestamp,
@@ -443,21 +452,17 @@
                     const isMarketOpen = hour >= 9 && hour < 21;
                     const minuteLabel = now.getMinutes(); // 实际到了几分钟
 
-                    const r1 = seededRand(seed + 999991);
+                    price = basePrice; // 最新K锚定在 basePrice
                     const r2 = seededRand(seed + 999993);
                     const r3 = seededRand(seed + 999997);
-
-                    if (isMarketOpen) {
-                        const randomWalk = (r1 - 0.5) * config.volatilityBase;
-                        price = Math.max(basePrice * 0.93, price + randomWalk);
-                    }
+                    const r4 = seededRand(seed + 999999);
 
                     const bodyRange = config.volatilityBase * 0.3;
                     const wickRange = config.volatilityBase * 0.15;
                     const open  = price;
                     const close = price + (isMarketOpen ? (r2 - 0.5) * bodyRange : 0);
                     const high  = Math.max(open, close) + (isMarketOpen ? r3 * wickRange : 0);
-                    const low   = Math.min(open, close) - (isMarketOpen ? seededRand(seed + 999999) * wickRange : 0);
+                    const low   = Math.min(open, close) - (isMarketOpen ? r4 * wickRange : 0);
 
                     // 当前未完成K线：date 存整点，但 tooltip 展示到分钟
                     data.push({
@@ -493,29 +498,38 @@
                     tradingDays.push({ timestamp, date });
                 }
 
-                // Step2：tradingDays 现在是 [今天, 昨天, ...最远]，反转为升序
-                tradingDays.reverse();
-
-                // Step3：按升序依次生成蜡烛数据（固定种子，避免切换跳动）
-                for (let idx = 0; idx < tradingDays.length; idx++) {
-                    const { timestamp, date } = tradingDays[idx];
-                    const s = seed + idx * 100;
+                // Step2：tradingDays 现在是 [今天, 昨天, ...最远]
+                // ── 倒推策略：从 basePrice 出发，往过去方向生成价格，再 reverse 正序渲染 ──
+                // 这样不论 points=7 还是 30，最新一根都锚定在 basePrice 附近，实现末尾对齐
+                const dayPrices = [basePrice]; // index 0 = 今天, index 1 = 昨天 ...
+                for (let i = 1; i < tradingDays.length; i++) {
+                    const s = seed + i * 100;
                     const r1 = seededRand(s + 1);
                     const r2 = seededRand(s + 3);
+                    const dailyMove = (r1 - 0.5) * config.volatilityBase * 2;
+                    const trend = (r2 - 0.48) * config.volatilityBase * 0.5;
+                    const prev = dayPrices[i - 1];
+                    dayPrices.push(Math.max(basePrice * 0.90, prev - dailyMove - trend)); // 往过去反向
+                }
+                dayPrices.reverse(); // 现在 index 0 = 最远, index[last] = 今天
+
+                // Step3：按升序依次生成蜡烛数据（固定种子，避免切换跳动）
+                tradingDays.reverse(); // tradingDays 也转为升序
+                for (let idx = 0; idx < tradingDays.length; idx++) {
+                    const { timestamp, date } = tradingDays[idx];
+                    price = dayPrices[idx];
+                    const s = seed + (tradingDays.length - 1 - idx) * 100;
                     const r3 = seededRand(s + 7);
                     const r4 = seededRand(s + 11);
                     const r5 = seededRand(s + 13);
-
-                    const dailyMove = (r1 - 0.5) * config.volatilityBase * 2;
-                    const trend = (r2 - 0.48) * config.volatilityBase * 0.5;
-                    price = Math.max(basePrice * 0.90, price + dailyMove + trend);
+                    const r6 = seededRand(s + 17);
 
                     const bodyRange = config.volatilityBase * 0.8;
                     const wickRange = config.volatilityBase * 0.5;
                     const open  = price + (r3 - 0.5) * bodyRange * 0.5;
                     const close = price + (r4 - 0.5) * bodyRange;
                     const high  = Math.max(open, close) + r5 * wickRange;
-                    const low   = Math.min(open, close) - seededRand(s + 17) * wickRange;
+                    const low   = Math.min(open, close) - r6 * wickRange;
 
                     data.push({
                         date, timestamp,
