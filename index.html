@@ -287,36 +287,83 @@
     </div>
 
     <script>
+        // 2026年3月真实基准价格（用于API失败时的兜底）
+        const FALLBACK_PRICES = {
+            international: 4380,  // USD/oz（2026年3月23日约$4,358~4,404）
+            china: 1022           // ¥/克（2026年3月23日AU9999约¥1,018~1,026）
+        };
+
         // 获取真实黄金价格数据
         async function fetchRealGoldData(type) {
-            try {
-                if (type === 'international') {
-                    // 获取国际黄金价格（美元/盎司）
-                    const response = await fetch('https://free.xwteam.cn/api/gold/trade');
-                    const data = await response.json();
-                    
-                    if (data && data.data && data.data.GJ && data.data.GJ.length > 0) {
-                        // 获取伦敦金或港金数据
-                        const goldData = data.data.GJ.find(item => item.code === 'LHJD' || item.code === 'XAUUSD') || data.data.GJ[0];
-                        return goldData;
+            // 尝试多个数据源
+            if (type === 'international') {
+                // 方案1：尝试通过公开API获取国际金价
+                const apis = [
+                    {
+                        url: 'https://api.metals.live/v1/spot/gold',
+                        parse: (d) => d && d.price ? d.price : null
+                    },
+                    {
+                        url: 'https://free.xwteam.cn/api/gold/trade',
+                        parse: (d) => {
+                            if (d && d.data && d.data.GJ && d.data.GJ.length > 0) {
+                                const item = d.data.GJ.find(i => i.code === 'LHJD' || i.code === 'XAUUSD') || d.data.GJ[0];
+                                const p = parseFloat(item.P || item.price || 0);
+                                // 若返回价格明显偏低（旧数据），则不信任
+                                return (p > 3000) ? p : null;
+                            }
+                            return null;
+                        }
                     }
-                } else if (type === 'china') {
-                    // 获取中国现货黄金价格（¥/克）
-                    const response = await fetch('https://v2.xxapi.cn/api/goldprice');
-                    const data = await response.json();
-                    
-                    if (data && data.data && data.data.bank_gold_bar_price && data.data.bank_gold_bar_price.length > 0) {
-                        // 从银行投资金条数据中获取平均价格
-                        const prices = data.data.bank_gold_bar_price.map(item => parseFloat(item.price));
-                        return {
-                            price: Math.round(prices.reduce((a, b) => a + b) / prices.length * 100) / 100,
-                            updated_date: new Date().toLocaleString('zh-CN')
-                        };
+                ];
+
+                for (const api of apis) {
+                    try {
+                        const resp = await fetch(api.url, { signal: AbortSignal.timeout(4000) });
+                        const data = await resp.json();
+                        const price = api.parse(data);
+                        if (price && price > 3000) {
+                            console.log(`国际金价来源: ${api.url}，价格: $${price}`);
+                            return { price };
+                        }
+                    } catch (e) {
+                        console.warn(`API ${api.url} 失败:`, e.message);
                     }
                 }
-            } catch (error) {
-                console.error('获取真实数据失败:', error);
+
+            } else if (type === 'china') {
+                // 尝试获取中国现货黄金
+                const apis = [
+                    {
+                        url: 'https://v2.xxapi.cn/api/goldprice',
+                        parse: (d) => {
+                            if (d && d.data && d.data.bank_gold_bar_price && d.data.bank_gold_bar_price.length > 0) {
+                                const prices = d.data.bank_gold_bar_price.map(i => parseFloat(i.price)).filter(p => p > 500);
+                                if (prices.length > 0) {
+                                    return prices.reduce((a, b) => a + b) / prices.length;
+                                }
+                            }
+                            return null;
+                        }
+                    }
+                ];
+
+                for (const api of apis) {
+                    try {
+                        const resp = await fetch(api.url, { signal: AbortSignal.timeout(4000) });
+                        const data = await resp.json();
+                        const price = api.parse(data);
+                        if (price && price > 500) {
+                            console.log(`中国金价来源: ${api.url}，价格: ¥${price.toFixed(2)}`);
+                            return { price };
+                        }
+                    } catch (e) {
+                        console.warn(`API ${api.url} 失败:`, e.message);
+                    }
+                }
             }
+
+            console.warn(`所有API均失败，使用2026年3月实际价格兜底`);
             return null;
         }
 
@@ -791,14 +838,16 @@
             
             // 获取真实价格数据
             const realData = await fetchRealGoldData(type);
-            const basePrice = realData ? parseFloat(realData.price || realData.P) : (type === 'international' ? 2050 : 430);
+            const basePrice = (realData && realData.price) ? parseFloat(realData.price) : FALLBACK_PRICES[type];
+            const dataSource = (realData && realData.price) ? '实时数据' : '参考价（2026年3月实际行情）';
             
             currentData = generateHistoricalData(currentTimeframe, basePrice, type);
             createCandlestickChart(currentData);
             createPriceChart(currentData);
             createIndicatorChart(currentData);
             
-            showInfoBanner(`已加载 ${type === 'international' ? '国际黄金' : '中国现货黄金'} 数据（基础价格: ${basePrice}）`);
+            const unit = type === 'international' ? `$${basePrice.toFixed(0)} USD/oz` : `¥${basePrice.toFixed(0)}/克`;
+            showInfoBanner(`已加载 ${type === 'international' ? '国际黄金' : '中国现货黄金'} 数据（${dataSource}：${unit}）`);
         }
 
         // 切换时间框架
@@ -816,7 +865,7 @@
             });
 
             const realData = await fetchRealGoldData(currentPriceType);
-            const basePrice = realData ? parseFloat(realData.price || realData.P) : (currentPriceType === 'international' ? 2050 : 430);
+            const basePrice = (realData && realData.price) ? parseFloat(realData.price) : FALLBACK_PRICES[currentPriceType];
             
             currentData = generateHistoricalData(timeframe, basePrice, currentPriceType);
             createCandlestickChart(currentData);
@@ -866,7 +915,8 @@
                 
                 // 加载初始数据
                 const realData = await fetchRealGoldData('international');
-                const basePrice = realData ? parseFloat(realData.price || realData.P) : 2050;
+                const basePrice = (realData && realData.price) ? parseFloat(realData.price) : FALLBACK_PRICES['international'];
+                const dataSource = (realData && realData.price) ? '实时' : '参考（2026年3月实际行情）';
                 
                 currentData = generateHistoricalData('7d', basePrice, 'international');
                 
@@ -874,7 +924,7 @@
                     createCandlestickChart(currentData);
                     createPriceChart(currentData);
                     createIndicatorChart(currentData);
-                    showInfoBanner(`已加载国际黄金数据（基础价格: ${basePrice} USD/oz）`);
+                    showInfoBanner(`已加载国际黄金${dataSource}数据（基础价格: $${basePrice.toFixed(0)} USD/oz）`);
                 }
             }, 500);
         };
