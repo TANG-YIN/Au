@@ -416,25 +416,30 @@
                     });
                 }
             } else {
-                // ── 日K：每天一根蜡烛，跳过周末（黄金周末不交易） ──
-                // 从足够远的过去开始往前推，确保能收集到足够的交易日
-                // 用日历天数 * 2 作为起始偏移量，保证即使遇到大量周末也能覆盖
-                const maxCalendarDays = config.points * 2 + 10;
-                let calendarDay = maxCalendarDays; // 从最远处开始往今天逼近
+                // ── 日K：从今天往过去倒推，确保最新蜡烛 = 今天（或最近交易日） ──
+                // Step1：先收集足够的交易日时间戳（倒序：最近→最远）
+                const tradingDays = [];
+                let calendarOffset = 0; // 0 = 今天，1 = 昨天，以此类推
+                const maxSearch = config.points * 3; // 最多搜索日历天数，绝对够用
 
-                while (calendarDay >= 0 && data.length < config.points) {
-                    const timestamp = now.getTime() - calendarDay * 24 * 60 * 60 * 1000;
+                while (tradingDays.length < config.points && calendarOffset <= maxSearch) {
+                    const timestamp = now.getTime() - calendarOffset * 24 * 60 * 60 * 1000;
                     const date = new Date(timestamp);
-                    const dayOfWeek = date.getDay(); // 0=周日, 6=周六
+                    const dayOfWeek = date.getDay();
 
-                    calendarDay--;
+                    calendarOffset++;
 
                     if (dayOfWeek === 0 || dayOfWeek === 6) {
-                        // 周末跳过，不生成蜡烛
-                        continue;
+                        continue; // 跳过周末
                     }
+                    tradingDays.push({ timestamp, date });
+                }
 
-                    // 日K波动幅度，相对基准价的比例约 ±0.4%
+                // Step2：tradingDays 现在是 [今天, 昨天, ...最远]，反转为升序
+                tradingDays.reverse();
+
+                // Step3：按升序依次生成蜡烛数据
+                for (const { timestamp, date } of tradingDays) {
                     const dailyMove = (Math.random() - 0.5) * config.volatilityBase * 2;
                     const trend = (Math.random() - 0.48) * config.volatilityBase * 0.5;
                     price = Math.max(basePrice * 0.90, price + dailyMove + trend);
@@ -456,8 +461,6 @@
                         kType: 'daily'
                     });
                 }
-                // 按时间升序排列（从远到近）
-                data.sort((a, b) => a.timestamp - b.timestamp);
             }
 
             return data;
