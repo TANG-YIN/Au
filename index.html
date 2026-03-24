@@ -246,11 +246,12 @@
 
             <!-- K线图 -->
             <div class="chart-wrapper">
-                <div class="chart-title">K线图（蜡烛图）- 真实数据</div>
+                <div class="chart-title" id="klineTitle">K线图（时K）</div>
                 <div class="controls">
-                    <button class="btn" onclick="switchTimeframe('1d')">1天</button>
-                    <button class="btn active" onclick="switchTimeframe('7d')">7天</button>
-                    <button class="btn" onclick="switchTimeframe('30d')">30天</button>
+                    <button class="btn" data-tf="1d" onclick="switchTimeframe('1d')">1天（时K）</button>
+                    <button class="btn" data-tf="3d" onclick="switchTimeframe('3d')">3天（时K）</button>
+                    <button class="btn active" data-tf="7d" onclick="switchTimeframe('7d')">7天（日K）</button>
+                    <button class="btn" data-tf="30d" onclick="switchTimeframe('30d')">30天（日K）</button>
                 </div>
                 <div class="chart-container" id="candleChartContainer">
                     <canvas id="candleChart"></canvas>
@@ -367,63 +368,98 @@
             return null;
         }
 
+        // 时间框架配置：type=hourly时K，daily日K
+        const TIMEFRAME_CONFIG = {
+            '1d':  { label: '1天（时K）',  kType: 'hourly', points: 24,  step: 60 * 60 * 1000,       volatilityBase: 2 },
+            '3d':  { label: '3天（时K）',  kType: 'hourly', points: 72,  step: 60 * 60 * 1000,       volatilityBase: 2 },
+            '7d':  { label: '7天（日K）',  kType: 'daily',  points: 7,   step: 24 * 60 * 60 * 1000,  volatilityBase: 15 },
+            '30d': { label: '30天（日K）', kType: 'daily',  points: 30,  step: 24 * 60 * 60 * 1000,  volatilityBase: 20 }
+        };
+
         // 生成历史数据（基于真实价格）
         function generateHistoricalData(timeframe, basePrice, type) {
             const data = [];
             const now = new Date();
-            
-            const intervals = {
-                '1d': { days: 1, points: 24, step: 60 * 60 * 1000 },      // 1小时
-                '7d': { days: 7, points: 168, step: 60 * 60 * 1000 },     // 1小时
-                '30d': { days: 30, points: 720, step: 60 * 60 * 1000 }    // 1小时
-            };
-            
-            const config = intervals[timeframe] || intervals['7d'];
+            const config = TIMEFRAME_CONFIG[timeframe] || TIMEFRAME_CONFIG['7d'];
             let price = basePrice;
-            
-            for (let i = config.points; i >= 0; i--) {
-                const timestamp = now.getTime() - i * config.step;
-                const date = new Date(timestamp);
-                
-                // 获取当前小时
-                const hour = date.getHours();
-                
-                // 非交易时间设置波动为0（晚上21:00-次日09:00为非交易时间）
-                const isMarketOpen = hour >= 9 && hour < 21;
-                
-                // 如果是非交易时间，使用前一个价格（没有波动）
-                let volatility = 0;
-                if (isMarketOpen) {
-                    // 交易时间有正常波动
-                    const randomWalk = (Math.random() - 0.5) * 2;
-                    const trend = (Math.random() - 0.5) * 0.3;
-                    volatility = randomWalk + trend;
-                } else {
-                    // 非交易时间，保持上一个收盘价
-                    if (data.length > 0) {
-                        volatility = 0;
+
+            if (config.kType === 'hourly') {
+                // ── 时K：每小时一根蜡烛，交易时段09:00-21:00有波动 ──
+                for (let i = config.points; i >= 0; i--) {
+                    const timestamp = now.getTime() - i * config.step;
+                    const date = new Date(timestamp);
+                    const hour = date.getHours();
+                    const isMarketOpen = hour >= 9 && hour < 21;
+
+                    if (isMarketOpen) {
+                        const randomWalk = (Math.random() - 0.5) * config.volatilityBase;
+                        const trend = (Math.random() - 0.5) * 0.3;
+                        price = Math.max(basePrice * 0.93, price + randomWalk + trend);
                     }
+                    // 非交易时段 price 不变
+
+                    const bodyRange = config.volatilityBase * 0.3;
+                    const wickRange = config.volatilityBase * 0.15;
+                    const open  = price;
+                    const close = price + (isMarketOpen ? (Math.random() - 0.5) * bodyRange : 0);
+                    const high  = Math.max(open, close) + (isMarketOpen ? Math.random() * wickRange : 0);
+                    const low   = Math.min(open, close) - (isMarketOpen ? Math.random() * wickRange : 0);
+
+                    data.push({
+                        date, timestamp,
+                        open:  parseFloat(open.toFixed(2)),
+                        high:  parseFloat(high.toFixed(2)),
+                        low:   parseFloat(low.toFixed(2)),
+                        close: parseFloat(close.toFixed(2)),
+                        isMarketOpen,
+                        kType: 'hourly'
+                    });
                 }
-                
-                price = Math.max(basePrice * 0.95, price + volatility);
-                
-                const open = price;
-                const close = price + (Math.random() - 0.5) * 0.5;
-                const high = Math.max(open, close) + Math.abs(Math.random()) * 0.3;
-                const low = Math.min(open, close) - Math.abs(Math.random()) * 0.3;
-                
-                data.push({
-                    date: date,
-                    timestamp: timestamp,
-                    open: parseFloat(open.toFixed(2)),
-                    high: parseFloat(high.toFixed(2)),
-                    low: parseFloat(low.toFixed(2)),
-                    close: parseFloat(close.toFixed(2)),
-                    volume: Math.random() * 1000000,
-                    isMarketOpen: isMarketOpen
-                });
+            } else {
+                // ── 日K：每天一根蜡烛，跳过周末（黄金周末不交易） ──
+                let daysAdded = 0;
+                let dayOffset = config.points;
+
+                while (daysAdded < config.points) {
+                    const timestamp = now.getTime() - dayOffset * config.step;
+                    const date = new Date(timestamp);
+                    const dayOfWeek = date.getDay(); // 0=周日, 6=周六
+
+                    dayOffset--;
+
+                    if (dayOfWeek === 0 || dayOfWeek === 6) {
+                        // 周末跳过，不生成蜡烛
+                        continue;
+                    }
+
+                    // 日K波动幅度（USD），相对基准价的比例约 ±0.4%
+                    const dailyMove = (Math.random() - 0.5) * config.volatilityBase * 2;
+                    const trend = (Math.random() - 0.48) * config.volatilityBase * 0.5; // 轻微上行偏差
+                    price = Math.max(basePrice * 0.90, price + dailyMove + trend);
+
+                    const bodyRange  = config.volatilityBase * 0.8;
+                    const wickRange  = config.volatilityBase * 0.5;
+                    const open  = price + (Math.random() - 0.5) * bodyRange * 0.5;
+                    const close = price + (Math.random() - 0.5) * bodyRange;
+                    const high  = Math.max(open, close) + Math.random() * wickRange;
+                    const low   = Math.min(open, close) - Math.random() * wickRange;
+
+                    data.push({
+                        date, timestamp,
+                        open:  parseFloat(open.toFixed(2)),
+                        high:  parseFloat(high.toFixed(2)),
+                        low:   parseFloat(low.toFixed(2)),
+                        close: parseFloat(close.toFixed(2)),
+                        isMarketOpen: true,
+                        kType: 'daily'
+                    });
+
+                    daysAdded++;
+                }
+                // 按时间升序排列
+                data.sort((a, b) => a.timestamp - b.timestamp);
             }
-            
+
             return data;
         }
 
@@ -577,10 +613,13 @@
 
             // 绘制X轴标签
             ctx.textAlign = 'center';
+            const isDaily = data.length > 0 && data[0].kType === 'daily';
             for (let i = 0; i < data.length; i += Math.ceil(data.length / 10)) {
                 const x = padding + (plotWidth / data.length) * i + (plotWidth / data.length) / 2;
-                const date = data[i].date;
-                const timeStr = date.toLocaleTimeString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                const d = data[i].date;
+                const timeStr = isDaily
+                    ? d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+                    : d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                 ctx.fillText(timeStr, x, canvas.height - 10);
             }
 
@@ -595,14 +634,17 @@
                         tooltip.style.display = 'block';
                         tooltip.style.left = mouseX + 'px';
                         tooltip.style.top = '10px';
-                        const marketStatus = candle.isMarketOpen ? '(交易时段)' : '(非交易时段)';
+                        const marketStatus = candle.kType === 'daily' ? '(日K)' : (candle.isMarketOpen ? '(交易时段)' : '(非交易时段)');
+                        const timeDisplay = candle.kType === 'daily'
+                            ? candle.date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                            : candle.date.toLocaleString('zh-CN');
                         tooltip.innerHTML = `
                             ${marketStatus}<br>
                             开: ${candle.open.toFixed(2)}<br>
                             高: ${candle.high.toFixed(2)}<br>
                             低: ${candle.low.toFixed(2)}<br>
                             收: ${candle.close.toFixed(2)}<br>
-                            时间: ${candle.date.toLocaleString('zh-CN')}
+                            时间: ${timeDisplay}
                         `;
                         return;
                     }
@@ -853,16 +895,16 @@
         // 切换时间框架
         async function switchTimeframe(timeframe) {
             currentTimeframe = timeframe;
-            
-            document.querySelectorAll('.controls .btn').forEach(btn => {
-                btn.classList.remove('active');
-                const text = btn.textContent.trim();
-                if ((timeframe === '1d' && text === '1天') ||
-                    (timeframe === '7d' && text === '7天') ||
-                    (timeframe === '30d' && text === '30天')) {
-                    btn.classList.add('active');
-                }
+            const cfg = TIMEFRAME_CONFIG[timeframe];
+
+            // 更新按钮 active 状态（按 data-tf 精确匹配）
+            document.querySelectorAll('[data-tf]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tf === timeframe);
             });
+
+            // 更新 K 线图标题
+            const kType = cfg.kType === 'hourly' ? '时K' : '日K';
+            document.getElementById('klineTitle').textContent = `K线图（${kType}）- ${cfg.label}`;
 
             const realData = await fetchRealGoldData(currentPriceType);
             const basePrice = (realData && realData.price) ? parseFloat(realData.price) : FALLBACK_PRICES[currentPriceType];
