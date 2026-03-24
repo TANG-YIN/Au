@@ -417,28 +417,30 @@
                 }
             } else {
                 // ── 日K：每天一根蜡烛，跳过周末（黄金周末不交易） ──
-                let daysAdded = 0;
-                let dayOffset = config.points;
+                // 从足够远的过去开始往前推，确保能收集到足够的交易日
+                // 用日历天数 * 2 作为起始偏移量，保证即使遇到大量周末也能覆盖
+                const maxCalendarDays = config.points * 2 + 10;
+                let calendarDay = maxCalendarDays; // 从最远处开始往今天逼近
 
-                while (daysAdded < config.points) {
-                    const timestamp = now.getTime() - dayOffset * config.step;
+                while (calendarDay >= 0 && data.length < config.points) {
+                    const timestamp = now.getTime() - calendarDay * 24 * 60 * 60 * 1000;
                     const date = new Date(timestamp);
                     const dayOfWeek = date.getDay(); // 0=周日, 6=周六
 
-                    dayOffset--;
+                    calendarDay--;
 
                     if (dayOfWeek === 0 || dayOfWeek === 6) {
                         // 周末跳过，不生成蜡烛
                         continue;
                     }
 
-                    // 日K波动幅度（USD），相对基准价的比例约 ±0.4%
+                    // 日K波动幅度，相对基准价的比例约 ±0.4%
                     const dailyMove = (Math.random() - 0.5) * config.volatilityBase * 2;
-                    const trend = (Math.random() - 0.48) * config.volatilityBase * 0.5; // 轻微上行偏差
+                    const trend = (Math.random() - 0.48) * config.volatilityBase * 0.5;
                     price = Math.max(basePrice * 0.90, price + dailyMove + trend);
 
-                    const bodyRange  = config.volatilityBase * 0.8;
-                    const wickRange  = config.volatilityBase * 0.5;
+                    const bodyRange = config.volatilityBase * 0.8;
+                    const wickRange = config.volatilityBase * 0.5;
                     const open  = price + (Math.random() - 0.5) * bodyRange * 0.5;
                     const close = price + (Math.random() - 0.5) * bodyRange;
                     const high  = Math.max(open, close) + Math.random() * wickRange;
@@ -453,10 +455,8 @@
                         isMarketOpen: true,
                         kType: 'daily'
                     });
-
-                    daysAdded++;
                 }
-                // 按时间升序排列
+                // 按时间升序排列（从远到近）
                 data.sort((a, b) => a.timestamp - b.timestamp);
             }
 
